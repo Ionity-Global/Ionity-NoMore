@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Ionity NoMore</string>
+    <string name="title_activity_main">Ionity NoMore</string>
+    <string name="package_name">za.co.ionity.nomore</string>
+    <string name="custom_url_scheme">za.co.ionity.nomore</string>
+</resources>
