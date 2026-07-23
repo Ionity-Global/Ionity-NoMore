@@ -23,4 +23,10 @@ describe('QR invitation encoding', () => {
 
     expect(decodeInvite(encoded)).toEqual(invite)
   })
+
+  it('rejects an expired renewable invite', () => {
+    const expired = encodeInvite({ ...invite, expiresAt: Date.now() - 1 }, 'https://nomore.example')
+
+    expect(() => decodeInvite(expired)).toThrow('invite has expired')
+  })
 })

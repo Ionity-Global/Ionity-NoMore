@@ -14,7 +14,6 @@ import {
   Sparkles,
   Users,
   X,
-  Zap,
 } from 'lucide-react'
 import { SafetyCircle } from './features/circle/SafetyCircle'
 import './App.css'
@@ -28,7 +27,7 @@ const actions = [
   { key: 'dnc' as const, icon: RadioTower, title: 'Do Not Contact', description: 'Open the official WASPA registry and manage your number.', code: 'WASPA DNC', carrier: 'Independent service' },
 ]
 
-const assistantPrompts = ['How do I stop paid services?', 'Why do I need to confirm?', 'What works on this device?']
+const assistantPrompts = ['How do I scan a friend?', 'Does chat need data?', 'How is my location protected?', 'How do I stop paid services?']
 
 function App() {
   const [view, setView] = useState<'cleanup' | 'circle'>('cleanup')
@@ -36,6 +35,7 @@ function App() {
   const [status, setStatus] = useState<ActionStatus>('ready')
   const [assistantOpen, setAssistantOpen] = useState(false)
   const [assistantReply, setAssistantReply] = useState('Choose a question below. I only use the guidance stored on this device.')
+  const [assistantQuestion, setAssistantQuestion] = useState('')
   const action = actions.find((item) => item.key === selectedAction)
 
   function openAction(actionKey: ActionKey) {
@@ -51,17 +51,32 @@ function App() {
   function answerPrompt(prompt: string) {
     const replies: Record<string, string> = {
       'How do I stop paid services?': 'Start with Paid subscriptions. NoMore will show the exact carrier code before anything opens.',
-      'Why do I need to confirm?': 'USSD and opt-out actions can affect your account. Confirmation keeps every action visible and intentional.',
-      'What works on this device?': 'This web preview provides guided steps. The Android app can detect SIMs and launch approved USSD codes.',
+      'How do I scan a friend?': 'Open Safety Circle, tap Scan QR, and allow camera access. Scan your friend’s five-minute code, then let them scan your response.',
+      'Does chat need data?': 'Chat needs a reachable Wi-Fi or mobile-data path, including EDGE. NoMore has no relay server. Satellite works only when Android or your carrier exposes it as a normal network connection.',
+      'How is my location protected?': 'Location permission is requested only after you tap Share. The default position is buffered by 500 m, sent over the encrypted peer link, and stops on the timer.',
     }
-    setAssistantReply(replies[prompt])
+    const normalized = prompt.toLowerCase()
+    const matched = replies[prompt]
+      ?? (normalized.includes('qr') || normalized.includes('scan') || normalized.includes('friend') ? replies['How do I scan a friend?']
+        : normalized.includes('data') || normalized.includes('satellite') || normalized.includes('edge') || normalized.includes('network') ? replies['Does chat need data?']
+          : normalized.includes('location') || normalized.includes('gps') || normalized.includes('track') ? replies['How is my location protected?']
+            : normalized.includes('paid') || normalized.includes('subscription') || normalized.includes('cancel') ? replies['How do I stop paid services?']
+              : 'I can help with QR pairing, connection requirements, location privacy, and mobile cleanup. No prompt is uploaded or sent to a model.')
+    setAssistantReply(matched)
+  }
+
+  function askAssistant(event: React.FormEvent) {
+    event.preventDefault()
+    if (!assistantQuestion.trim()) return
+    answerPrompt(assistantQuestion.trim())
+    setAssistantQuestion('')
   }
 
   return (
     <main className="app-shell">
       <header className="topbar">
         <a className="wordmark" href="https://www.ionity.co.za" target="_blank" rel="noreferrer">
-          <span className="mark" aria-hidden="true"><Zap size={18} fill="currentColor" /></span>
+          <span className="official-mark"><img src="/brand/ionity-global.png" alt="" /></span>
           <span>IONITY <strong>NoMore</strong></span>
         </a>
         <div className="header-actions">
@@ -84,10 +99,7 @@ function App() {
             <span><Check size={16} /> No account</span><span><Check size={16} /> No uploaded phone data</span><span><Check size={16} /> Confirm every action</span>
           </div>
         </div>
-        <div className="signal-visual" aria-hidden="true">
-          <div className="signal-ring signal-ring-one" /><div className="signal-ring signal-ring-two" /><div className="signal-ring signal-ring-three" />
-          <div className="phone-core"><Smartphone size={38} /><Zap className="core-bolt" size={18} fill="currentColor" /></div>
-        </div>
+        <img className="official-banner" src="/brand/ionity-banner.png" alt="Ionity Global, Building Tomorrow Today" />
       </section>
 
       <section className="workspace">
@@ -112,7 +124,7 @@ function App() {
         </div>
         <aside className="assistant-panel">
           <div className="assistant-intro"><span className="assistant-icon"><Bot size={23} /></span><div><p className="section-kicker">Private assistant</p><h2>Not sure where to start?</h2></div></div>
-          <p>Your questions are answered on this device using a small, fixed guidance library.</p>
+          <p>Ask in your own words. Local intent matching finds guidance without uploading your question.</p>
           <button className="secondary-button" type="button" onClick={() => setAssistantOpen(true)}>Ask NoMore <ArrowRight size={17} /></button>
         </aside>
       </section>
@@ -143,6 +155,7 @@ function App() {
       {assistantOpen && <div className="assistant-drawer" role="dialog" aria-modal="true" aria-labelledby="assistant-title">
         <div className="drawer-heading"><span className="assistant-icon"><Bot size={23} /></span><div><p className="section-kicker">On-device guidance</p><h2 id="assistant-title">Ask NoMore</h2></div><button className="icon-button" type="button" onClick={() => setAssistantOpen(false)} aria-label="Close assistant"><X size={20} /></button></div>
         <div className="assistant-answer">{assistantReply}</div>
+        <form className="assistant-form" onSubmit={askAssistant}><input value={assistantQuestion} onChange={(event) => setAssistantQuestion(event.target.value)} maxLength={180} placeholder="Ask about pairing, data, GPS..." aria-label="Ask the private assistant" /><button type="submit" disabled={!assistantQuestion.trim()} aria-label="Ask"><ArrowRight size={18} /></button></form>
         <div className="prompt-list">{assistantPrompts.map((prompt) => <button type="button" key={prompt} onClick={() => answerPrompt(prompt)}>{prompt}<ChevronRight size={17} /></button>)}</div>
         <p className="drawer-privacy"><LockKeyhole size={14} /> No messages leave this device.</p>
       </div>}

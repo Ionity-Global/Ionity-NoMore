@@ -8,7 +8,7 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['nomore-icon.svg'],
+      includeAssets: ['brand/favicon.ico', 'brand/ionity-global.png', 'brand/ionity-banner.png'],
       manifest: {
         name: 'Ionity NoMore',
         short_name: 'NoMore',
@@ -19,10 +19,10 @@ export default defineConfig({
         start_url: '/',
         icons: [
           {
-            src: '/nomore-icon.svg',
-            sizes: 'any',
-            type: 'image/svg+xml',
-            purpose: 'any maskable',
+            src: '/brand/ionity-global.png',
+            sizes: '1000x1000',
+            type: 'image/png',
+            purpose: 'any',
           },
         ],
       },

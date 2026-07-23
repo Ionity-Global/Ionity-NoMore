@@ -13,9 +13,12 @@ export interface CircleInvite {
   kind: 'offer' | 'answer'
   circleId: string
   displayName: string
+  expiresAt?: number
   publicKey: JsonWebKey
   description: RTCSessionDescriptionInit
 }
+
+const INVITE_LIFETIME_MS = 5 * 60_000
 
 export type CirclePacket =
   | { type: 'chat'; id: string; sender: string; text: string; sentAt: number }
@@ -128,6 +131,7 @@ export class PrivatePeerSession {
       kind,
       circleId: this.circleId,
       displayName: this.displayName,
+      expiresAt: Date.now() + INVITE_LIFETIME_MS,
       publicKey: this.identity.publicKey,
       description: this.connection.localDescription.toJSON(),
     }
@@ -164,6 +168,9 @@ export function decodeInvite(value: string): CircleInvite {
   const invite = JSON.parse(json) as CircleInvite
   if (invite.version !== 1 || !['offer', 'answer'].includes(invite.kind)) {
     throw new Error('Unsupported safety circle invitation')
+  }
+  if (invite.expiresAt && invite.expiresAt <= Date.now()) {
+    throw new Error('This private invite has expired. Ask your friend to renew it.')
   }
   return invite
 }
