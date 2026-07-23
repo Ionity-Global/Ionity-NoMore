@@ -244,6 +244,11 @@ button { border: 0; font: inherit; }
 .connection-copy strong { color: var(--navy); font-size: 14px; }
 .connection-copy span { color: var(--muted); font-size: 13px; }
 .text-button { display: flex; align-items: center; gap: 4px; color: var(--blue); background: transparent; font-size: 13px; font-weight: 800; cursor: pointer; }
+.carrier-picker { margin-top: -14px; margin-bottom: 22px; padding: 14px 18px; display: flex; flex-wrap: wrap; gap: 8px; border: 1px solid var(--line); border-left: 4px solid var(--cyan); background: white; }
+.carrier-picker button { min-height: 40px; padding: 0 16px; color: var(--navy); border: 1px solid #aebfc7; background: white; font-size: 13px; font-weight: 800; cursor: pointer; }
+.carrier-picker button:hover { border-color: var(--blue); }
+.carrier-picker button.selected { color: white; border-color: var(--blue); background: var(--blue); }
+.share-toast { position: fixed; left: 50%; bottom: 26px; z-index: 60; transform: translateX(-50%); max-width: min(92vw, 460px); padding: 12px 18px; color: white; background: var(--navy); font-size: 13px; font-weight: 700; box-shadow: 0 10px 30px rgba(9,45,54,.35); }
 .action-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin: 18px 0; }
 .action-card { min-height: 176px; padding: 24px; display: flex; flex-direction: column; align-items: flex-start; text-align: left; border: 1px solid var(--line); border-radius: 4px; background: white; color: var(--ink); cursor: pointer; position: relative; animation: rise .45s ease-out both; transition: transform .2s, border-color .2s, box-shadow .2s; }
 .action-card:hover { transform: translateY(-3px); border-color: #9bc7dd; box-shadow: 0 12px 30px rgba(16,43,62,.09); }
@@ -289,6 +294,9 @@ button { border: 0; font: inherit; }
 .assistant-form button { display: grid; place-items: center; color: white; background: var(--blue); cursor: pointer; }
 .assistant-form button:disabled { opacity: .45; cursor: not-allowed; }
 .prompt-list { display: grid; gap: 8px; }
+.ocr-button { min-height: 50px; margin-bottom: 12px; padding: 0 14px; display: flex; align-items: center; justify-content: center; gap: 9px; width: 100%; color: var(--navy); border: 1px dashed #8fa7b0; background: #f2f7f6; font-size: 13px; font-weight: 800; cursor: pointer; }
+.ocr-button:hover { border-color: var(--blue); color: var(--blue); }
+.ocr-button:disabled { opacity: .55; cursor: progress; }
 .prompt-list button { min-height: 50px; padding: 0 14px; display: flex; align-items: center; justify-content: space-between; text-align: left; color: var(--navy); border: 1px solid var(--line); background: white; font-size: 13px; font-weight: 700; cursor: pointer; }
 .prompt-list button:hover { border-color: var(--blue); }
 .drawer-privacy { position: absolute; left: 28px; bottom: 22px; display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 11px; }

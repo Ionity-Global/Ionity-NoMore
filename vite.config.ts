@@ -29,6 +29,10 @@ export default defineConfig({
       workbox: {
         cleanupOutdatedCaches: true,
         navigateFallback: '/index.html',
+        // The offline OCR runtime and language model are intentionally
+        // precached so AEDi can read message photos with no connection.
+        maximumFileSizeToCacheInBytes: 16 * 1024 * 1024,
+        globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2,webmanifest,gz}'],
       },
     }),
   ],

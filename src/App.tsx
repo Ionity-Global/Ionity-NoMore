@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   ArrowRight,
   Bot,
@@ -8,7 +8,10 @@ import {
   ExternalLink,
   LockKeyhole,
   MessageSquareOff,
+  PhoneCall,
   RadioTower,
+  ScanText,
+  Share2,
   ShieldCheck,
   Smartphone,
   Sparkles,
@@ -16,27 +19,55 @@ import {
   X,
 } from 'lucide-react'
 import { SafetyCircle } from './features/circle/SafetyCircle'
+import { analyzeMessageText, askAedi } from './features/aedi/engine'
+import { recognizeImage } from './features/aedi/ocr'
+import { CARRIERS, type CarrierProfile } from './features/device/carriers'
+import { APP_DOWNLOAD_URL, detectCarrier, isNativeAndroid, openDialerWithCode, shareNoMore } from './features/device/native'
 import './App.css'
 
 type ActionKey = 'subscriptions' | 'spam' | 'dnc'
 type ActionStatus = 'ready' | 'confirming' | 'verifying' | 'complete'
 
-const actions = [
-  { key: 'subscriptions' as const, icon: MessageSquareOff, title: 'Paid subscriptions', description: 'Check and cancel content services billed to your mobile account.', code: '*135*997#', carrier: 'Vodacom' },
-  { key: 'spam' as const, icon: ShieldCheck, title: 'Marketing messages', description: 'Use official opt-out guidance for unwanted promotional messages.', code: 'Reply STOP', carrier: 'Message sender' },
-  { key: 'dnc' as const, icon: RadioTower, title: 'Do Not Contact', description: 'Open the official WASPA registry and manage your number.', code: 'WASPA DNC', carrier: 'Independent service' },
-]
-
-const assistantPrompts = ['How do I scan a friend?', 'How do voice notes work?', 'Does chat need data?', 'How is my location protected?', 'How do I stop paid services?']
+const assistantPrompts = ['How do I stop paid services?', 'Can you read a suspicious SMS photo?', 'How do I scan a friend?', 'How do voice notes work?', 'How is my location protected?']
 
 function App() {
   const [view, setView] = useState<'cleanup' | 'circle'>('cleanup')
   const [selectedAction, setSelectedAction] = useState<ActionKey | null>(null)
   const [status, setStatus] = useState<ActionStatus>('ready')
   const [assistantOpen, setAssistantOpen] = useState(false)
-  const [assistantReply, setAssistantReply] = useState('Choose a question below. I only use the guidance stored on this device.')
+  const [assistantReply, setAssistantReply] = useState('I\u2019m AEDi. Ask in your own words, or hand me a photo of a suspicious SMS \u2014 everything is answered with knowledge stored on this device.')
   const [assistantQuestion, setAssistantQuestion] = useState('')
+  const [carrier, setCarrier] = useState<CarrierProfile | null>(null)
+  const [carrierSource, setCarrierSource] = useState<'sim' | 'manual' | null>(null)
+  const [choosingCarrier, setChoosingCarrier] = useState(false)
+  const [reading, setReading] = useState(false)
+  const [shareNote, setShareNote] = useState('')
+  const photoInputRef = useRef<HTMLInputElement>(null)
+  const shareNoteTimerRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    void detectCarrier().then((detected) => {
+      if (detected) {
+        setCarrier(detected)
+        setCarrierSource('sim')
+      }
+    })
+  }, [])
+
+  const actions = [
+    {
+      key: 'subscriptions' as const,
+      icon: MessageSquareOff,
+      title: 'Paid subscriptions',
+      description: carrier?.guidance ?? 'Check and cancel content services billed to your mobile account.',
+      code: carrier ? carrier.subscriptionsCode ?? 'App / web only' : 'Choose carrier first',
+      carrier: carrier?.name ?? 'Select your carrier above',
+    },
+    { key: 'spam' as const, icon: ShieldCheck, title: 'Marketing messages', description: 'Use official opt-out guidance for unwanted promotional messages.', code: 'Reply STOP', carrier: 'Message sender' },
+    { key: 'dnc' as const, icon: RadioTower, title: 'Do Not Contact', description: 'Open the official WASPA registry and manage your number.', code: 'WASPA DNC', carrier: 'Independent service' },
+  ]
   const action = actions.find((item) => item.key === selectedAction)
+  const canDial = Boolean(action?.key === 'subscriptions' && carrier?.subscriptionsCode)
 
   function openAction(actionKey: ActionKey) {
     setSelectedAction(actionKey)
@@ -48,23 +79,21 @@ function App() {
     setStatus('ready')
   }
 
-  function answerPrompt(prompt: string) {
-    const replies: Record<string, string> = {
-      'How do I stop paid services?': 'Start with Paid subscriptions. NoMore will show the exact carrier code before anything opens.',
-      'How do I scan a friend?': 'Open Safety Circle, tap Scan QR, and allow camera access. Scan your friend’s five-minute code, then let them scan your response.',
-      'How do voice notes work?': 'After connecting, tap the microphone, allow access, speak for up to 30 seconds, then tap Stop. Each chunk is end-to-end encrypted. Recordings stay only for this connection.',
-      'Does chat need data?': 'Chat needs a reachable Wi-Fi or mobile-data path, including EDGE. NoMore has no relay server. Satellite works only when Android or your carrier exposes it as a normal network connection.',
-      'How is my location protected?': 'Location permission is requested only after you tap Share. The default position is buffered by 500 m, sent over the encrypted peer link, and stops on the timer.',
+  function continueAction() {
+    if (canDial && carrier?.subscriptionsCode) {
+      void openDialerWithCode(carrier.subscriptionsCode)
     }
-    const normalized = prompt.toLowerCase()
-    const matched = replies[prompt]
-      ?? (normalized.includes('qr') || normalized.includes('scan') || normalized.includes('friend') ? replies['How do I scan a friend?']
-        : normalized.includes('voice') || normalized.includes('record') || normalized.includes('microphone') || normalized.includes('hear') ? replies['How do voice notes work?']
-          : normalized.includes('data') || normalized.includes('satellite') || normalized.includes('edge') || normalized.includes('network') ? replies['Does chat need data?']
-            : normalized.includes('location') || normalized.includes('gps') || normalized.includes('track') ? replies['How is my location protected?']
-              : normalized.includes('paid') || normalized.includes('subscription') || normalized.includes('cancel') ? replies['How do I stop paid services?']
-                : 'I can help with QR pairing, voice notes, connection requirements, location privacy, and mobile cleanup. No prompt is uploaded or sent to a model.')
-    setAssistantReply(matched)
+    setStatus('verifying')
+  }
+
+  function chooseCarrier(profile: CarrierProfile) {
+    setCarrier(profile)
+    setCarrierSource('manual')
+    setChoosingCarrier(false)
+  }
+
+  function answerPrompt(prompt: string) {
+    setAssistantReply(askAedi(prompt).answer)
   }
 
   function askAssistant(event: React.FormEvent) {
@@ -72,6 +101,39 @@ function App() {
     if (!assistantQuestion.trim()) return
     answerPrompt(assistantQuestion.trim())
     setAssistantQuestion('')
+  }
+
+  async function readMessagePhoto(file: File) {
+    setReading(true)
+    setAssistantReply('Reading the photo on this phone\u2026 the first read loads the local model and takes a few seconds.')
+    try {
+      const { text } = await recognizeImage(file)
+      const analysis = analyzeMessageText(text)
+      setAssistantReply(analysis.summary)
+    } catch {
+      setAssistantReply('I could not read that image on this device. Try a sharper, well-lit photo with the message filling the frame.')
+    } finally {
+      setReading(false)
+    }
+  }
+
+  function onPhotoPicked(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (file) void readMessagePhoto(file)
+  }
+
+  async function shareApp() {
+    const outcome = await shareNoMore()
+    const notes = {
+      apk: 'Sharing the app itself \u2014 it can travel by Bluetooth or Quick Share, no data needed.',
+      link: 'Download link shared.',
+      copied: 'Download link copied. Paste it anywhere.',
+      unavailable: `Sharing is unavailable here. Download link: ${APP_DOWNLOAD_URL}`,
+    }
+    setShareNote(notes[outcome])
+    if (shareNoteTimerRef.current !== null) window.clearTimeout(shareNoteTimerRef.current)
+    shareNoteTimerRef.current = window.setTimeout(() => setShareNote(''), 6_000)
   }
 
   return (
@@ -87,9 +149,11 @@ function App() {
             <button className={view === 'circle' ? 'active' : ''} type="button" onClick={() => setView('circle')}><Users size={15} /> Safety Circle</button>
           </nav>
           <span className="privacy-badge"><LockKeyhole size={14} /> Private by design</span>
+          <button className="icon-button" type="button" onClick={() => { void shareApp() }} title="Share this app" aria-label="Share this app"><Share2 size={19} /></button>
           <button className="icon-button" type="button" title="Help" aria-label="Help"><CircleHelp size={20} /></button>
         </div>
       </header>
+      {shareNote && <div className="share-toast" role="status">{shareNote}</div>}
 
       {view === 'circle' ? <SafetyCircle /> : <>
       <section className="hero-band">
@@ -111,9 +175,20 @@ function App() {
         </div>
         <div className="connection-strip">
           <div className="sim-icon"><Smartphone size={22} /></div>
-          <div className="connection-copy"><strong>Carrier detection is available in the Android app</strong><span>Choose your carrier manually in this web preview.</span></div>
-          <button className="text-button" type="button">Choose carrier <ChevronRight size={17} /></button>
+          <div className="connection-copy">
+            {carrier ? <>
+              <strong>{carrier.name} {carrierSource === 'sim' ? 'SIM detected' : 'selected'}</strong>
+              <span>{carrierSource === 'sim' ? 'Read from your SIM on this phone \u2014 nothing was uploaded.' : 'Codes below are matched to this carrier.'}</span>
+            </> : <>
+              <strong>{isNativeAndroid() ? 'No SIM detected' : 'Choose your carrier'}</strong>
+              <span>{isNativeAndroid() ? 'Insert a SIM or choose your carrier manually.' : 'In the Android app your SIM is detected automatically.'}</span>
+            </>}
+          </div>
+          <button className="text-button" type="button" onClick={() => setChoosingCarrier((open) => !open)}>{carrier ? 'Change' : 'Choose carrier'} <ChevronRight size={17} /></button>
         </div>
+        {choosingCarrier && <div className="carrier-picker" role="listbox" aria-label="Choose your carrier">
+          {CARRIERS.map((profile) => <button type="button" key={profile.key} className={carrier?.key === profile.key ? 'selected' : ''} onClick={() => chooseCarrier(profile)} role="option" aria-selected={carrier?.key === profile.key}>{profile.name}</button>)}
+        </div>}
         <div className="action-grid">
           {actions.map((item) => {
             const Icon = item.icon
@@ -125,9 +200,9 @@ function App() {
           })}
         </div>
         <aside className="assistant-panel">
-          <div className="assistant-intro"><span className="assistant-icon"><Bot size={23} /></span><div><p className="section-kicker">Private assistant</p><h2>Not sure where to start?</h2></div></div>
-          <p>Ask in your own words. Local intent matching finds guidance without uploading your question.</p>
-          <button className="secondary-button" type="button" onClick={() => setAssistantOpen(true)}>Ask NoMore <ArrowRight size={17} /></button>
+          <div className="assistant-intro"><span className="assistant-icon"><Bot size={23} /></span><div><p className="section-kicker">AEDi private assistant</p><h2>Not sure where to start?</h2></div></div>
+          <p>Ask in your own words or show AEDi a photo of a suspicious SMS. Reading and matching happen on this device, and nothing is uploaded.</p>
+          <button className="secondary-button" type="button" onClick={() => setAssistantOpen(true)}>Ask AEDi <ArrowRight size={17} /></button>
         </aside>
       </section>
 
@@ -139,8 +214,9 @@ function App() {
           {status === 'confirming' && <>
             <p className="section-kicker">Review exact action</p><h2 id="action-title">{action.title}</h2><p>{action.description}</p>
             <dl className="action-preview"><div><dt>Action</dt><dd>{action.code}</dd></div><div><dt>Provider</dt><dd>{action.carrier}</dd></div><div><dt>Cost</dt><dd>Standard carrier rates may apply</dd></div></dl>
-            <p className="safety-note"><ShieldCheck size={18} /> Nothing runs until you continue and confirm with your carrier.</p>
-            <button className="primary-button" type="button" onClick={() => setStatus('verifying')}>Continue safely <ArrowRight size={18} /></button>
+            <p className="safety-note"><ShieldCheck size={18} /> {canDial ? 'Continue opens your dialer with this code filled in. Nothing dials until you press call yourself.' : 'Nothing runs until you continue and confirm with your carrier.'}</p>
+            {action.key === 'subscriptions' && !carrier && <p className="safety-note"><Smartphone size={18} /> Choose your carrier first so AEDi can show the exact code.</p>}
+            <button className="primary-button" type="button" onClick={continueAction} disabled={action.key === 'subscriptions' && !carrier}>{canDial ? <><PhoneCall size={18} /> Open dialer with {carrier?.subscriptionsCode}</> : <>Continue safely <ArrowRight size={18} /></>}</button>
           </>}
           {status === 'verifying' && <>
             <span className="modal-status"><Smartphone size={26} /></span><p className="section-kicker">Verification required</p><h2 id="action-title">Did the provider confirm it?</h2>
@@ -155,11 +231,13 @@ function App() {
       </div>}
 
       {assistantOpen && <div className="assistant-drawer" role="dialog" aria-modal="true" aria-labelledby="assistant-title">
-        <div className="drawer-heading"><span className="assistant-icon"><Bot size={23} /></span><div><p className="section-kicker">On-device guidance</p><h2 id="assistant-title">Ask NoMore</h2></div><button className="icon-button" type="button" onClick={() => setAssistantOpen(false)} aria-label="Close assistant"><X size={20} /></button></div>
-        <div className="assistant-answer">{assistantReply}</div>
-        <form className="assistant-form" onSubmit={askAssistant}><input value={assistantQuestion} onChange={(event) => setAssistantQuestion(event.target.value)} maxLength={180} placeholder="Ask about pairing, data, GPS..." aria-label="Ask the private assistant" /><button type="submit" disabled={!assistantQuestion.trim()} aria-label="Ask"><ArrowRight size={18} /></button></form>
-        <div className="prompt-list">{assistantPrompts.map((prompt) => <button type="button" key={prompt} onClick={() => answerPrompt(prompt)}>{prompt}<ChevronRight size={17} /></button>)}</div>
-        <p className="drawer-privacy"><LockKeyhole size={14} /> No messages leave this device.</p>
+        <div className="drawer-heading"><span className="assistant-icon"><Bot size={23} /></span><div><p className="section-kicker">On-device guidance</p><h2 id="assistant-title">Ask AEDi</h2></div><button className="icon-button" type="button" onClick={() => setAssistantOpen(false)} aria-label="Close assistant"><X size={20} /></button></div>
+        <div className="assistant-answer" aria-live="polite">{assistantReply}</div>
+        <form className="assistant-form" onSubmit={askAssistant}><input value={assistantQuestion} onChange={(event) => setAssistantQuestion(event.target.value)} maxLength={180} placeholder="Ask about pairing, billing, GPS..." aria-label="Ask AEDi" disabled={reading} /><button type="submit" disabled={!assistantQuestion.trim() || reading} aria-label="Ask"><ArrowRight size={18} /></button></form>
+        <button className="ocr-button" type="button" onClick={() => photoInputRef.current?.click()} disabled={reading}><ScanText size={18} /> {reading ? 'Reading on this device...' : 'Read a message photo (offline OCR)'}</button>
+        <input ref={photoInputRef} type="file" accept="image/*" onChange={onPhotoPicked} hidden aria-hidden="true" />
+        <div className="prompt-list">{assistantPrompts.map((prompt) => <button type="button" key={prompt} onClick={() => answerPrompt(prompt)} disabled={reading}>{prompt}<ChevronRight size={17} /></button>)}</div>
+        <p className="drawer-privacy"><LockKeyhole size={14} /> Questions and photos never leave this device.</p>
       </div>}
       </>}
     </main>

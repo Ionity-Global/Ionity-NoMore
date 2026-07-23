@@ -10,6 +10,7 @@ import { Capacitor } from '@capacitor/core'
 import { Geolocation, type Position as NativePosition } from '@capacitor/geolocation'
 import {
   AlertTriangle,
+  Bluetooth,
   Camera,
   Clock3,
   Copy,
@@ -21,6 +22,7 @@ import {
   Map as MapIcon,
   MessageCircle,
   Mic,
+  Radar,
   Radio,
   RefreshCw,
   Send,
@@ -35,6 +37,15 @@ import {
 } from 'lucide-react'
 import { QRCodeSVG } from 'qrcode.react'
 import { decodeAudioChunks, encodeAudioChunks } from './audio'
+import {
+  BAND_LABELS,
+  RssiSmoother,
+  circleServiceUuid,
+  classifyProximity,
+  estimateDistanceMeters,
+  type ProximityBand,
+} from './nearby'
+import { NoMoreNearby, isNativeAndroid } from '../device/native'
 import {
   PrivatePeerSession,
   decodeInvite,
@@ -106,6 +117,10 @@ export function SafetyCircle() {
   const [shareMinutes, setShareMinutes] = useState(15)
   const [sharingUntil, setSharingUntil] = useState<number | null>(null)
   const [locations, setLocations] = useState<Record<string, PrivateLocation>>({})
+  const [nearbyActive, setNearbyActive] = useState(false)
+  const [nearbyReading, setNearbyReading] = useState<{ distance: number; band: ProximityBand } | null>(null)
+  const [nearbyNote, setNearbyNote] = useState('')
+  const nearbySmootherRef = useRef(new RssiSmoother())
   const sessionRef = useRef<PrivatePeerSession | null>(null)
   const watchRef = useRef<{ source: 'native' | 'web'; id: string | number } | null>(null)
   const stopTimerRef = useRef<number | null>(null)
@@ -150,6 +165,7 @@ export function SafetyCircle() {
       stopLocationWatcher()
       discardRecording()
       releaseAudioMessages()
+      void stopNearby()
     }
   }, [])
 
@@ -174,6 +190,7 @@ export function SafetyCircle() {
         if (state === 'failed' || state === 'disconnected' || state === 'closed') {
           stopLocationSharing(false)
           discardRecording()
+          void stopNearby()
           setPhase(state === 'failed' ? 'error' : 'idle')
           if (state === 'failed') setError('The direct connection could not be established. Keep both devices on the same reachable network and try again.')
         }
@@ -547,9 +564,47 @@ export function SafetyCircle() {
     stopTimerRef.current = null
   }
 
+  async function startNearby() {
+    if (!isNativeAndroid()) {
+      setNearbyNote('Nearby detection uses Bluetooth and works in the Android app.')
+      return
+    }
+    const session = sessionRef.current
+    if (!session || phase !== 'connected') return
+    setNearbyNote('')
+    nearbySmootherRef.current.reset()
+    try {
+      await NoMoreNearby.removeAllListeners()
+      await NoMoreNearby.addListener('reading', (reading) => {
+        const smoothed = nearbySmootherRef.current.push(reading.rssi)
+        const distance = estimateDistanceMeters(smoothed, reading.txPower)
+        setNearbyReading({ distance, band: classifyProximity(distance) })
+      })
+      await NoMoreNearby.addListener('scanFailed', () => {
+        setNearbyNote('The Bluetooth beacon stopped. Check that Bluetooth is on and try again.')
+        void stopNearby()
+      })
+      await NoMoreNearby.start({ serviceUuid: await circleServiceUuid(session.circleId) })
+      setNearbyActive(true)
+    } catch (reason) {
+      await NoMoreNearby.removeAllListeners().catch(() => undefined)
+      setNearbyNote(errorMessage(reason, 'Nearby detection could not start.'))
+    }
+  }
+
+  async function stopNearby() {
+    setNearbyActive(false)
+    setNearbyReading(null)
+    nearbySmootherRef.current.reset()
+    if (!isNativeAndroid()) return
+    await NoMoreNearby.stop().catch(() => undefined)
+    await NoMoreNearby.removeAllListeners().catch(() => undefined)
+  }
+
   function disconnect() {
     discardRecording()
     stopLocationSharing(true)
+    void stopNearby()
     sessionRef.current?.close()
     sessionRef.current = null
     setPhase('idle')
@@ -660,6 +715,23 @@ export function SafetyCircle() {
               <p><Radio size={15} /> Chat needs reachable Wi-Fi or mobile data such as EDGE. Satellite works only when the device or carrier exposes it as a normal network connection.</p>
             </div>
             {error && <p className="circle-error dashboard-error"><AlertTriangle size={17} /> {error}</p>}
+
+            <div className="nearby-panel">
+              <div className="panel-heading"><div><p className="section-kicker">Anonymous Bluetooth beacon</p><h2>Find nearby</h2></div><span><Bluetooth size={17} /> No names broadcast</span></div>
+              <div className="nearby-body">
+                {nearbyActive ? <>
+                  <div className={nearbyReading ? `nearby-reading band-${nearbyReading.band}` : 'nearby-reading'}>
+                    <Radar size={22} />
+                    {nearbyReading ? <span><strong>{BAND_LABELS[nearbyReading.band]}</strong><small>Estimated ~{nearbyReading.distance} m from {peerName}</small></span> : <span><strong>Listening for {peerName}...</strong><small>Both phones must keep this panel open</small></span>}
+                  </div>
+                  <button className="circle-secondary" type="button" onClick={() => { void stopNearby() }}><ShieldOff size={16} /> Stop beacon</button>
+                </> : <>
+                  <p className="nearby-copy">Both phones broadcast an anonymous beacon derived from this circle — no names, no addresses, no message content. Readings are approximate: walls, pockets, and antennas change them.</p>
+                  <button className="circle-secondary" type="button" onClick={() => { void startNearby() }}><Radar size={16} /> Find nearby (approximate)</button>
+                </>}
+                {nearbyNote && <p className="nearby-note"><AlertTriangle size={15} /> {nearbyNote}</p>}
+              </div>
+            </div>
 
             <div className="geomap-panel">
               <div className="panel-heading"><div><p className="section-kicker">Local geomap</p><h2>Shared positions</h2></div><span><MapIcon size={17} /> No map server</span></div>
