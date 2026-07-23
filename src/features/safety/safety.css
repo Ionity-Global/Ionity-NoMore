@@ -1,0 +1,36 @@
+/* Safety toolkit: emergency row, SOS, and the fake-call escape screen. */
+
+.emergency-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 12px 16px; border: 1px solid #e3c9bd; border-left: 4px solid #c0492c; background: #fdf6f2; }
+.emergency-title { display: flex; align-items: center; gap: 7px; color: #a2371c; font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .06em; }
+.emergency-dial { display: flex; align-items: center; gap: 7px; min-height: 40px; padding: 0 14px; color: #6d3423; border: 1px solid #dcb8a9; background: white; font-size: 12.5px; font-weight: 700; cursor: pointer; }
+.emergency-dial strong { color: #a2371c; font-size: 13.5px; }
+.emergency-dial:hover { border-color: #c0492c; }
+.emergency-escape { min-height: 40px; margin-left: auto; padding: 0 16px; color: #173c43; border: 1px dashed #8fa7b0; background: white; font-size: 12.5px; font-weight: 800; cursor: pointer; }
+.emergency-escape:hover { border-color: #087d71; color: #087d71; }
+
+.sos-button { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 18px; color: white; border: 0; background: #c0492c; font-size: 13px; font-weight: 800; cursor: pointer; }
+.sos-button.armed { background: #8f1f06; animation: sos-pulse 0.9s infinite; }
+@keyframes sos-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(192, 73, 44, .55); } 50% { box-shadow: 0 0 0 9px rgba(192, 73, 44, 0); } }
+
+.sos-banner { position: fixed; top: 0; left: 0; right: 0; z-index: 90; display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 14px 20px; color: white; background: #8f1f06; box-shadow: 0 8px 30px rgba(143, 31, 6, .45); }
+.sos-banner strong { font-size: 15px; }
+.sos-banner span { font-size: 12.5px; opacity: .92; }
+.sos-banner .sos-actions { display: flex; gap: 8px; margin-left: auto; }
+.sos-banner button { min-height: 38px; padding: 0 14px; border: 1px solid rgba(255,255,255,.55); background: transparent; color: white; font-size: 12.5px; font-weight: 800; cursor: pointer; }
+.sos-banner button.solid { background: white; color: #8f1f06; border-color: white; }
+
+.fake-call { position: fixed; inset: 0; z-index: 120; display: flex; flex-direction: column; justify-content: space-between; padding: 12vh 24px 9vh; color: white; background: linear-gradient(180deg, #0d1f26 0%, #10333d 55%, #0a161b 100%); }
+.fake-call-top { display: grid; justify-items: center; gap: 10px; text-align: center; }
+.fake-call-state { margin: 0; font-size: 13px; letter-spacing: .12em; text-transform: uppercase; opacity: .75; }
+.fake-call-avatar { display: grid; place-items: center; width: 96px; height: 96px; border-radius: 50%; background: rgba(255,255,255,.14); }
+.fake-call h2 { margin: 0; font-size: 34px; font-weight: 600; }
+.fake-call-line { margin: 0; font-size: 14px; opacity: .7; }
+.fake-call-actions { display: flex; align-items: center; justify-content: space-around; }
+.fake-call-actions.active { justify-content: center; gap: 34px; }
+.fake-answer, .fake-decline { display: grid; place-items: center; width: 72px; height: 72px; border-radius: 50%; border: 0; color: white; cursor: pointer; }
+.fake-answer { background: #1fa855; animation: fake-ring 1.1s infinite; }
+.fake-decline { background: #d63b2f; }
+.fake-call-tool { display: grid; place-items: center; width: 56px; height: 56px; border-radius: 50%; background: rgba(255,255,255,.14); opacity: .85; }
+@keyframes fake-ring { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.08); } }
+
+.update-note { display: flex; align-items: center; gap: 8px; }

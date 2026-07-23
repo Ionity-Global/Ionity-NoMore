@@ -26,6 +26,7 @@ export type CirclePacket =
   | { type: 'audio-chunk'; id: string; index: number; data: string }
   | { type: 'location'; sender: string; location: unknown; expiresAt: number }
   | { type: 'sharing-stopped'; sender: string; sentAt: number }
+  | { type: 'sos'; sender: string; sentAt: number }
 
 interface SessionCallbacks {
   onPacket: (packet: CirclePacket) => void

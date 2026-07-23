@@ -31,6 +31,22 @@ describe('askAedi', () => {
     expect(result.topic).toBe('fallback')
     expect(result.confidence).toBe(0)
   })
+
+  it('knows the South African emergency numbers offline', () => {
+    const result = askAedi('what is the police emergency number?')
+
+    expect(result.topic).toBe('emergency')
+    expect(result.answer).toContain('10111')
+    expect(result.answer).toContain('112')
+  })
+
+  it('explains the SOS panic flow', () => {
+    expect(askAedi('how does the panic alarm work?').topic).toBe('sos')
+  })
+
+  it('explains the fake call escape', () => {
+    expect(askAedi('can you fake a ring to help me escape?').topic).toBe('fakecall')
+  })
 })
 
 describe('analyzeMessageText', () => {

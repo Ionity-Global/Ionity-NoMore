@@ -23,6 +23,8 @@ import { analyzeMessageText, askAedi } from './features/aedi/engine'
 import { recognizeImage } from './features/aedi/ocr'
 import { CARRIERS, type CarrierProfile } from './features/device/carriers'
 import { APP_DOWNLOAD_URL, detectCarrier, isNativeAndroid, openDialerWithCode, shareNoMore } from './features/device/native'
+import { APP_VERSION, checkForUpdate } from './features/device/updates'
+import { QRCodeSVG } from 'qrcode.react'
 import './App.css'
 
 type ActionKey = 'subscriptions' | 'spam' | 'dnc'
@@ -42,6 +44,9 @@ function App() {
   const [choosingCarrier, setChoosingCarrier] = useState(false)
   const [reading, setReading] = useState(false)
   const [shareNote, setShareNote] = useState('')
+  const [qrOpen, setQrOpen] = useState(false)
+  const [updateNote, setUpdateNote] = useState('')
+  const [checkingUpdate, setCheckingUpdate] = useState(false)
   const photoInputRef = useRef<HTMLInputElement>(null)
   const shareNoteTimerRef = useRef<number | null>(null)
 
@@ -132,8 +137,25 @@ function App() {
       unavailable: `Sharing is unavailable here. Download link: ${APP_DOWNLOAD_URL}`,
     }
     setShareNote(notes[outcome])
+    if (outcome !== 'apk') setQrOpen(true)
     if (shareNoteTimerRef.current !== null) window.clearTimeout(shareNoteTimerRef.current)
     shareNoteTimerRef.current = window.setTimeout(() => setShareNote(''), 6_000)
+  }
+
+  async function runUpdateCheck() {
+    if (checkingUpdate) return
+    setCheckingUpdate(true)
+    setUpdateNote('Checking\u2026')
+    const result = await checkForUpdate()
+    if (result.status === 'update' && result.url) {
+      setUpdateNote(`Version ${result.latest} is available \u2014 opening the release page.`)
+      window.open(result.url, '_blank', 'noopener')
+    } else if (result.status === 'current') {
+      setUpdateNote(`You are on the latest version (${APP_VERSION}).`)
+    } else {
+      setUpdateNote('Could not check right now. Try again when you have a connection.')
+    }
+    setCheckingUpdate(false)
   }
 
   return (
@@ -154,6 +176,15 @@ function App() {
         </div>
       </header>
       {shareNote && <div className="share-toast" role="status">{shareNote}</div>}
+      {qrOpen && <div className="modal-backdrop" role="presentation" onMouseDown={() => setQrOpen(false)}>
+        <section className="action-modal qr-share-modal" role="dialog" aria-modal="true" aria-labelledby="qr-share-title" onMouseDown={(event) => event.stopPropagation()}>
+          <button className="modal-close icon-button" type="button" onClick={() => setQrOpen(false)} aria-label="Close"><X size={20} /></button>
+          <p className="section-kicker">Share Ionity NoMore</p>
+          <h2 id="qr-share-title">Scan to download</h2>
+          <div className="qr-share-frame"><QRCodeSVG value={APP_DOWNLOAD_URL} size={196} level="M" marginSize={2} title="Ionity NoMore download QR" /></div>
+          <p>Points to the official releases page. In the Android app, the share button sends the APK itself, so no data is needed.</p>
+        </section>
+      </div>}
 
       {view === 'circle' ? <SafetyCircle /> : <>
       <section className="hero-band">
@@ -206,7 +237,11 @@ function App() {
         </aside>
       </section>
 
-      <footer><span>Building Tomorrow, Today.</span><a href="https://www.ionity.co.za" target="_blank" rel="noreferrer">ionity.co.za <ExternalLink size={13} /></a></footer>
+      <footer>
+        <span>Building Tomorrow, Today.</span>
+        <button className="version-button" type="button" onClick={() => { void runUpdateCheck() }} disabled={checkingUpdate} title="Check for a newer release">v{APP_VERSION}{updateNote ? ` \u00b7 ${updateNote}` : ' \u00b7 Check for updates'}</button>
+        <a href="https://www.ionity.co.za" target="_blank" rel="noreferrer">ionity.co.za <ExternalLink size={13} /></a>
+      </footer>
 
       {action && <div className="modal-backdrop" role="presentation" onMouseDown={closeAction}>
         <section className="action-modal" role="dialog" aria-modal="true" aria-labelledby="action-title" onMouseDown={(event) => event.stopPropagation()}>

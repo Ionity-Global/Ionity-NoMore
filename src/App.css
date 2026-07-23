@@ -249,6 +249,11 @@ button { border: 0; font: inherit; }
 .carrier-picker button:hover { border-color: var(--blue); }
 .carrier-picker button.selected { color: white; border-color: var(--blue); background: var(--blue); }
 .share-toast { position: fixed; left: 50%; bottom: 26px; z-index: 60; transform: translateX(-50%); max-width: min(92vw, 460px); padding: 12px 18px; color: white; background: var(--navy); font-size: 13px; font-weight: 700; box-shadow: 0 10px 30px rgba(9,45,54,.35); }
+.version-button { color: #708083; background: transparent; border: 0; font-size: 12px; font-weight: 700; cursor: pointer; }
+.version-button:hover { color: var(--blue); }
+.version-button:disabled { cursor: progress; }
+.qr-share-modal { display: grid; justify-items: center; text-align: center; gap: 12px; }
+.qr-share-frame { padding: 14px; border: 1px solid var(--line); background: white; }
 .action-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin: 18px 0; }
 .action-card { min-height: 176px; padding: 24px; display: flex; flex-direction: column; align-items: flex-start; text-align: left; border: 1px solid var(--line); border-radius: 4px; background: white; color: var(--ink); cursor: pointer; position: relative; animation: rise .45s ease-out both; transition: transform .2s, border-color .2s, box-shadow .2s; }
 .action-card:hover { transform: translateY(-3px); border-color: #9bc7dd; box-shadow: 0 12px 30px rgba(16,43,62,.09); }

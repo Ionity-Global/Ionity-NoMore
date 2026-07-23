@@ -40,6 +40,10 @@ const SYNONYMS: Record<string, string> = {
   meters: 'proximity', spam: 'marketing', promo: 'marketing', promotional: 'marketing',
   advert: 'marketing', adverts: 'marketing', ads: 'marketing', sms: 'message',
   texts: 'message', messages: 'message',
+  police: 'emergency', saps: 'emergency', cops: 'emergency', ambulance: 'emergency',
+  fire: 'emergency', paramedic: 'emergency', danger: 'emergency', unsafe: 'emergency',
+  panic: 'sos', alarm: 'sos', pretend: 'fakecall', excuse: 'fakecall', escape: 'fakecall',
+  update: 'updates', version: 'updates', upgrade: 'updates', latest: 'updates',
 }
 
 const KNOWLEDGE: KnowledgeEntry[] = [
@@ -103,10 +107,34 @@ const KNOWLEDGE: KnowledgeEntry[] = [
     answer:
       'For promotional SMS, reply STOP to the sender \u2014 South African senders must honour it. For broader relief, open Do Not Contact in Cleanup to use the WASPA registry.',
   },
+  {
+    topic: 'emergency',
+    keywords: { emergency: 3, number: 2, dial: 1, '112': 3, '10111': 3, '10177': 3, help: 1 },
+    answer:
+      'South African emergency numbers: 112 from any mobile (free, works on any network, even with no airtime), 10111 for SAPS police, 10177 for ambulance and fire. The Emergency row in Safety Circle opens your dialer with the number filled in \u2014 you press call. If you are paired, the SOS button also alerts your circle with your exact location.',
+  },
+  {
+    topic: 'sos',
+    keywords: { sos: 3, send: 1, circle: 1, location: 1, emergency: 1 },
+    answer:
+      'Tap SOS in the connected view, then tap again to confirm. Your peer\u2019s phone sounds an alarm and shows a red alert, and your exact location shares for the next hour over the encrypted link. Dismissing the alert stops the sound, not their sharing.',
+  },
+  {
+    topic: 'fakecall',
+    keywords: { fakecall: 3, fake: 3, dial: 1, ring: 2, uncomfortable: 2 },
+    answer:
+      'Tap Fake call in the Emergency row. Your phone shows a realistic incoming call \u2014 generated entirely on this device \u2014 so you can step away from an uncomfortable situation. Answer it, talk as long as you need, then end it. Nothing is dialed and nothing is recorded.',
+  },
+  {
+    topic: 'updates',
+    keywords: { updates: 3, check: 1, new: 1, download: 1 },
+    answer:
+      'The web app updates itself. In the Android app, tap the version number at the bottom of Cleanup to check the official releases page \u2014 one anonymous request, only when you tap. New APKs can also travel phone-to-phone with Share.',
+  },
 ]
 
 const FALLBACK =
-  'I can help with QR pairing, voice notes, connection requirements, location privacy, reading a suspicious SMS photo, carrier codes, and nearby detection. Ask in your own words \u2014 nothing you type or photograph leaves this phone.'
+  'I can help with QR pairing, voice notes, location privacy, reading a suspicious SMS photo, carrier codes, SOS and the emergency numbers 112 / 10111 / 10177, the fake-call escape, nearby detection, and updates. Ask in your own words \u2014 nothing you type or photograph leaves this phone.'
 
 export function normalizeToken(token: string): string {
   const cleaned = token.toLowerCase().replace(/[^a-z0-9]/g, '')

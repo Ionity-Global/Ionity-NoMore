@@ -1,4 +1,4 @@
-name: Build Android APK
+name: CI
 
 on:
   workflow_dispatch:
@@ -7,14 +7,43 @@ on:
       - main
 
 permissions:
-  contents: read
+  contents: write
 
 defaults:
   run:
     shell: bash
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.8.0
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm run lint
+
+      - name: Test
+        run: pnpm run test
+
+      - name: Build web app
+        run: pnpm run build
+
   build-apk:
+    needs: test
     runs-on: ubuntu-latest
 
     steps:
@@ -52,9 +81,30 @@ jobs:
           chmod +x ./gradlew
           ./gradlew assembleDebug
 
+      - name: Read app version
+        id: version
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Name APK
+        run: cp android/app/build/outputs/apk/debug/app-debug.apk "Ionity-NoMore-${{ steps.version.outputs.version }}.apk"
+
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: nomore-debug-apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          path: Ionity-NoMore-${{ steps.version.outputs.version }}.apk
           if-no-files-found: error
+
+      - name: Publish release for new versions
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="apk-${{ steps.version.outputs.version }}"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "Release $TAG already exists - skipping publish"
+          else
+            gh release create "$TAG" "Ionity-NoMore-${{ steps.version.outputs.version }}.apk" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "Ionity NoMore ${{ steps.version.outputs.version }}" \
+              --generate-notes
+          fi

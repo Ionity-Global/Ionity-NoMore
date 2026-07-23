@@ -28,6 +28,7 @@ import {
   Send,
   Shield,
   ShieldOff,
+  Siren,
   Smartphone,
   Square,
   Trash2,
@@ -37,6 +38,9 @@ import {
 } from 'lucide-react'
 import { QRCodeSVG } from 'qrcode.react'
 import { decodeAudioChunks, encodeAudioChunks } from './audio'
+import { EmergencyRow } from '../safety/EmergencyRow'
+import { FakeCall } from '../safety/FakeCall'
+import { startSosAlarm, stopSosAlarm } from '../safety/alerts'
 import {
   BAND_LABELS,
   RssiSmoother,
@@ -45,7 +49,7 @@ import {
   estimateDistanceMeters,
   type ProximityBand,
 } from './nearby'
-import { NoMoreNearby, isNativeAndroid } from '../device/native'
+import { NoMoreNearby, isNativeAndroid, openDialerWithCode } from '../device/native'
 import {
   PrivatePeerSession,
   decodeInvite,
@@ -120,6 +124,10 @@ export function SafetyCircle() {
   const [nearbyActive, setNearbyActive] = useState(false)
   const [nearbyReading, setNearbyReading] = useState<{ distance: number; band: ProximityBand } | null>(null)
   const [nearbyNote, setNearbyNote] = useState('')
+  const [sosArmed, setSosArmed] = useState(false)
+  const [sosAlert, setSosAlert] = useState<{ sender: string; sentAt: number } | null>(null)
+  const [showFakeCall, setShowFakeCall] = useState(false)
+  const sosArmTimerRef = useRef<number | null>(null)
   const nearbySmootherRef = useRef(new RssiSmoother())
   const sessionRef = useRef<PrivatePeerSession | null>(null)
   const watchRef = useRef<{ source: 'native' | 'web'; id: string | number } | null>(null)
@@ -165,6 +173,7 @@ export function SafetyCircle() {
       stopLocationWatcher()
       discardRecording()
       releaseAudioMessages()
+      stopSosAlarm()
       void stopNearby()
     }
   }, [])
@@ -339,6 +348,18 @@ export function SafetyCircle() {
         return next
       })
     }
+    if (packet.type === 'sos') {
+      setSosAlert({ sender: packet.sender, sentAt: packet.sentAt })
+      setMessages((current) => [...current, {
+        id: crypto.randomUUID(),
+        sender: packet.sender,
+        kind: 'text',
+        text: '\u{1F198} SOS \u2014 needs help now. Watch the shared positions map.',
+        sentAt: packet.sentAt,
+        own: false,
+      }])
+      startSosAlarm()
+    }
   }
 
   function receiveAudioChunk(packet: Extract<CirclePacket, { type: 'audio-chunk' }>) {
@@ -462,7 +483,9 @@ export function SafetyCircle() {
     }
   }
 
-  async function startLocationSharing() {
+  async function startLocationSharing(precisionOverride?: LocationPrecision, minutesOverride?: number) {
+    const sharePrecision = precisionOverride ?? precision
+    const shareDuration = minutesOverride ?? shareMinutes
     const native = Capacitor.isNativePlatform()
     if ((!native && !navigator.geolocation) || phase !== 'connected') {
       setError('Location sharing needs an active peer connection and device location support.')
@@ -470,11 +493,11 @@ export function SafetyCircle() {
     }
     stopLocationWatcher()
     setError('')
-    const expiresAt = Date.now() + shareMinutes * 60_000
+    const expiresAt = Date.now() + shareDuration * 60_000
     setSharingUntil(expiresAt)
     try {
       if (native) {
-        const permissionName = precision === 0 ? 'location' : 'coarseLocation'
+        const permissionName = sharePrecision === 0 ? 'location' : 'coarseLocation'
         let permissions = await Geolocation.checkPermissions()
         if (permissions[permissionName] !== 'granted') {
           permissions = await Geolocation.requestPermissions({ permissions: [permissionName] })
@@ -484,39 +507,39 @@ export function SafetyCircle() {
         }
         const id = await Geolocation.watchPosition(
           {
-            enableHighAccuracy: precision === 0,
+            enableHighAccuracy: sharePrecision === 0,
             maximumAge: 15_000,
             timeout: 20_000,
             interval: 5_000,
             minimumUpdateInterval: 5_000,
           },
-          (position, locationError) => handleNativePosition(position, locationError, expiresAt),
+          (position, locationError) => handleNativePosition(position, locationError, expiresAt, sharePrecision),
         )
         watchRef.current = { source: 'native', id }
       } else {
         const id = navigator.geolocation.watchPosition(
-          (position) => sharePosition(position, expiresAt),
+          (position) => sharePosition(position, expiresAt, sharePrecision),
           (locationError) => handleLocationError(locationError),
-          { enableHighAccuracy: precision === 0, maximumAge: 15_000, timeout: 20_000 },
+          { enableHighAccuracy: sharePrecision === 0, maximumAge: 15_000, timeout: 20_000 },
         )
         watchRef.current = { source: 'web', id }
       }
-      stopTimerRef.current = window.setTimeout(() => stopLocationSharing(true), shareMinutes * 60_000)
+      stopTimerRef.current = window.setTimeout(() => stopLocationSharing(true), shareDuration * 60_000)
     } catch (reason) {
       stopLocationSharing(false)
       setError(errorMessage(reason, 'Location services are unavailable or turned off.'))
     }
   }
 
-  function handleNativePosition(position: NativePosition | null, locationError: unknown, expiresAt: number) {
+  function handleNativePosition(position: NativePosition | null, locationError: unknown, expiresAt: number, sharePrecision: LocationPrecision) {
     if (locationError) {
       handleLocationError(locationError)
     } else if (position) {
-      sharePosition(position, expiresAt)
+      sharePosition(position, expiresAt, sharePrecision)
     }
   }
 
-  function sharePosition(position: Pick<GeolocationPosition, 'coords' | 'timestamp'> | NativePosition, expiresAt: number) {
+  function sharePosition(position: Pick<GeolocationPosition, 'coords' | 'timestamp'> | NativePosition, expiresAt: number, sharePrecision: LocationPrecision) {
     const location = bufferLocation(
       {
         latitude: position.coords.latitude,
@@ -524,7 +547,7 @@ export function SafetyCircle() {
         accuracy: position.coords.accuracy,
         timestamp: position.timestamp,
       },
-      precision,
+      sharePrecision,
     )
     setLocations((current) => ({ ...current, [displayName]: location }))
     void sessionRef.current?.send({
@@ -601,10 +624,45 @@ export function SafetyCircle() {
     await NoMoreNearby.removeAllListeners().catch(() => undefined)
   }
 
+  async function pressSos() {
+    if (phase !== 'connected') return
+    if (!sosArmed) {
+      setSosArmed(true)
+      if (sosArmTimerRef.current !== null) window.clearTimeout(sosArmTimerRef.current)
+      sosArmTimerRef.current = window.setTimeout(() => setSosArmed(false), 4_000)
+      return
+    }
+    if (sosArmTimerRef.current !== null) window.clearTimeout(sosArmTimerRef.current)
+    setSosArmed(false)
+    const sentAt = Date.now()
+    try {
+      await sessionRef.current?.send({ type: 'sos', sender: displayName, sentAt })
+      setMessages((current) => [...current, {
+        id: crypto.randomUUID(),
+        sender: displayName,
+        kind: 'text',
+        text: '\u{1F198} SOS sent \u2014 sharing my exact location for the next hour.',
+        sentAt,
+        own: true,
+      }])
+      setPrecision(0)
+      setShareMinutes(60)
+      await startLocationSharing(0, 60)
+    } catch (reason) {
+      showError(reason)
+    }
+  }
+
+  function dismissSosAlert() {
+    stopSosAlarm()
+    setSosAlert(null)
+  }
+
   function disconnect() {
     discardRecording()
     stopLocationSharing(true)
     void stopNearby()
+    dismissSosAlert()
     sessionRef.current?.close()
     sessionRef.current = null
     setPhase('idle')
@@ -643,6 +701,15 @@ export function SafetyCircle() {
 
   return (
     <div className="circle-page">
+      {sosAlert && <div className="sos-banner" role="alert">
+        <Siren size={26} />
+        <div><strong>{sosAlert.sender} sent an SOS</strong><br /><span>Sent {new Date(sosAlert.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}. Their exact location is sharing on the map below.</span></div>
+        <div className="sos-actions">
+          <button className="solid" type="button" onClick={() => { void openDialerWithCode('112') }}>Call 112</button>
+          <button type="button" onClick={dismissSosAlert}>Dismiss</button>
+        </div>
+      </div>}
+      {showFakeCall && <FakeCall onClose={() => setShowFakeCall(false)} />}
       <section className="circle-hero">
         <div>
           <p className="circle-eyebrow"><Shield size={15} /> Safety Circle</p>
@@ -653,6 +720,7 @@ export function SafetyCircle() {
       </section>
 
       <section className="circle-workspace">
+        <EmergencyRow onFakeCall={() => setShowFakeCall(true)} />
         <div className="privacy-principles">
           <span><LockKeyhole size={17} /><strong>Double encrypted</strong><small>WebRTC plus AES-GCM</small></span>
           <span><Crosshair size={17} /><strong>500 m buffer</strong><small>Exact location is opt-in</small></span>
@@ -706,6 +774,7 @@ export function SafetyCircle() {
           <section className="circle-dashboard">
             <div className="circle-statusbar">
               <span className="live-peer"><span /> Direct link to <strong>{peerName}</strong></span>
+              <button className={sosArmed ? 'sos-button armed' : 'sos-button'} type="button" onClick={() => { void pressSos() }}><Siren size={17} /> {sosArmed ? 'Tap again to send SOS' : 'SOS'}</button>
               <button className="danger-button" type="button" onClick={disconnect}><Unplug size={16} /> Disconnect</button>
             </div>
 
@@ -743,7 +812,7 @@ export function SafetyCircle() {
                 <label>Stop automatically<select value={shareMinutes} onChange={(event) => setShareMinutes(Number(event.target.value))} disabled={sharing}>
                   <option value={5}>After 5 minutes</option><option value={15}>After 15 minutes</option><option value={60}>After 1 hour</option>
                 </select></label>
-                {sharing ? <button className="stop-sharing" type="button" onClick={() => stopLocationSharing(true)}><ShieldOff size={18} /> Stop sharing now</button> : <button className="circle-primary" type="button" onClick={startLocationSharing}><LocateFixed size={18} /> Share my location</button>}
+                {sharing ? <button className="stop-sharing" type="button" onClick={() => stopLocationSharing(true)}><ShieldOff size={18} /> Stop sharing now</button> : <button className="circle-primary" type="button" onClick={() => { void startLocationSharing() }}><LocateFixed size={18} /> Share my location</button>}
               </div>
               {precision === 0 && !sharing && <p className="exact-warning"><AlertTriangle size={16} /> Exact mode can reveal a home or routine. Use it briefly and only with people you trust.</p>}
               {sharingUntil && <p className="sharing-visible"><Radio size={15} /> Location sharing is visible and ends at {new Date(sharingUntil).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.</p>}
