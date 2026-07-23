@@ -27,7 +27,7 @@ const actions = [
   { key: 'dnc' as const, icon: RadioTower, title: 'Do Not Contact', description: 'Open the official WASPA registry and manage your number.', code: 'WASPA DNC', carrier: 'Independent service' },
 ]
 
-const assistantPrompts = ['How do I scan a friend?', 'Does chat need data?', 'How is my location protected?', 'How do I stop paid services?']
+const assistantPrompts = ['How do I scan a friend?', 'How do voice notes work?', 'Does chat need data?', 'How is my location protected?', 'How do I stop paid services?']
 
 function App() {
   const [view, setView] = useState<'cleanup' | 'circle'>('cleanup')
@@ -52,16 +52,18 @@ function App() {
     const replies: Record<string, string> = {
       'How do I stop paid services?': 'Start with Paid subscriptions. NoMore will show the exact carrier code before anything opens.',
       'How do I scan a friend?': 'Open Safety Circle, tap Scan QR, and allow camera access. Scan your friend’s five-minute code, then let them scan your response.',
+      'How do voice notes work?': 'After connecting, tap the microphone, allow access, speak for up to 30 seconds, then tap Stop. Each chunk is end-to-end encrypted. Recordings stay only for this connection.',
       'Does chat need data?': 'Chat needs a reachable Wi-Fi or mobile-data path, including EDGE. NoMore has no relay server. Satellite works only when Android or your carrier exposes it as a normal network connection.',
       'How is my location protected?': 'Location permission is requested only after you tap Share. The default position is buffered by 500 m, sent over the encrypted peer link, and stops on the timer.',
     }
     const normalized = prompt.toLowerCase()
     const matched = replies[prompt]
       ?? (normalized.includes('qr') || normalized.includes('scan') || normalized.includes('friend') ? replies['How do I scan a friend?']
-        : normalized.includes('data') || normalized.includes('satellite') || normalized.includes('edge') || normalized.includes('network') ? replies['Does chat need data?']
-          : normalized.includes('location') || normalized.includes('gps') || normalized.includes('track') ? replies['How is my location protected?']
-            : normalized.includes('paid') || normalized.includes('subscription') || normalized.includes('cancel') ? replies['How do I stop paid services?']
-              : 'I can help with QR pairing, connection requirements, location privacy, and mobile cleanup. No prompt is uploaded or sent to a model.')
+        : normalized.includes('voice') || normalized.includes('record') || normalized.includes('microphone') || normalized.includes('hear') ? replies['How do voice notes work?']
+          : normalized.includes('data') || normalized.includes('satellite') || normalized.includes('edge') || normalized.includes('network') ? replies['Does chat need data?']
+            : normalized.includes('location') || normalized.includes('gps') || normalized.includes('track') ? replies['How is my location protected?']
+              : normalized.includes('paid') || normalized.includes('subscription') || normalized.includes('cancel') ? replies['How do I stop paid services?']
+                : 'I can help with QR pairing, voice notes, connection requirements, location privacy, and mobile cleanup. No prompt is uploaded or sent to a model.')
     setAssistantReply(matched)
   }
 

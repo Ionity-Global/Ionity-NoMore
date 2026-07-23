@@ -22,6 +22,8 @@ const INVITE_LIFETIME_MS = 5 * 60_000
 
 export type CirclePacket =
   | { type: 'chat'; id: string; sender: string; text: string; sentAt: number }
+  | { type: 'audio-start'; id: string; sender: string; sentAt: number; mimeType: string; totalChunks: number }
+  | { type: 'audio-chunk'; id: string; index: number; data: string }
   | { type: 'location'; sender: string; location: unknown; expiresAt: number }
   | { type: 'sharing-stopped'; sender: string; sentAt: number }
 
@@ -115,7 +117,9 @@ export class PrivatePeerSession {
     if (!this.peerKey || this.channel?.readyState !== 'open') {
       throw new Error('The peer connection is not ready')
     }
+    await this.waitForChannelCapacity()
     const envelope = await encryptForPeer(this.peerKey, packet)
+    if (this.channel.readyState !== 'open') throw new Error('The peer connection closed')
     this.channel.send(JSON.stringify(envelope))
   }
 
@@ -149,6 +153,34 @@ export class PrivatePeerSession {
         this.close()
       }
     }
+  }
+
+  private async waitForChannelCapacity() {
+    const channel = this.channel
+    if (!channel || channel.readyState !== 'open') throw new Error('The peer connection is not ready')
+    if (channel.bufferedAmount <= 256 * 1024) return
+    channel.bufferedAmountLowThreshold = 64 * 1024
+    await new Promise<void>((resolve, reject) => {
+      const timeout = window.setTimeout(() => {
+        cleanup()
+        reject(new Error('The encrypted connection is too busy to send this recording'))
+      }, 10_000)
+      const handleLow = () => {
+        cleanup()
+        resolve()
+      }
+      const handleClose = () => {
+        cleanup()
+        reject(new Error('The peer connection closed'))
+      }
+      const cleanup = () => {
+        window.clearTimeout(timeout)
+        channel.removeEventListener('bufferedamountlow', handleLow)
+        channel.removeEventListener('close', handleClose)
+      }
+      channel.addEventListener('bufferedamountlow', handleLow, { once: true })
+      channel.addEventListener('close', handleClose, { once: true })
+    })
   }
 }
 

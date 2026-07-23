@@ -18,20 +18,23 @@ import {
   Link2,
   LocateFixed,
   LockKeyhole,
-  Map,
+  Map as MapIcon,
   MessageCircle,
+  Mic,
   Radio,
   RefreshCw,
   Send,
   Shield,
   ShieldOff,
   Smartphone,
+  Square,
   Trash2,
   Unplug,
   UserPlus,
   Users,
 } from 'lucide-react'
 import { QRCodeSVG } from 'qrcode.react'
+import { decodeAudioChunks, encodeAudioChunks } from './audio'
 import {
   PrivatePeerSession,
   decodeInvite,
@@ -58,9 +61,19 @@ type ConnectionPhase =
 interface ChatMessage {
   id: string
   sender: string
-  text: string
+  kind?: 'text' | 'audio'
+  text?: string
+  audioUrl?: string
   sentAt: number
   own: boolean
+}
+
+interface IncomingAudio {
+  sender: string
+  sentAt: number
+  mimeType: string
+  chunks: Array<string | undefined>
+  received: number
 }
 
 const SIGNAL_CHANNEL = 'nomore-circle-signaling-v1'
@@ -87,6 +100,8 @@ export function SafetyCircle() {
   const [messages, setMessages] = useState<ChatMessage[]>(loadMessageHistory)
   const [rememberMessages, setRememberMessages] = useState(true)
   const [message, setMessage] = useState('')
+  const [recording, setRecording] = useState(false)
+  const [sendingAudio, setSendingAudio] = useState(false)
   const [precision, setPrecision] = useState<LocationPrecision>(500)
   const [shareMinutes, setShareMinutes] = useState(15)
   const [sharingUntil, setSharingUntil] = useState<number | null>(null)
@@ -94,6 +109,13 @@ export function SafetyCircle() {
   const sessionRef = useRef<PrivatePeerSession | null>(null)
   const watchRef = useRef<{ source: 'native' | 'web'; id: string | number } | null>(null)
   const stopTimerRef = useRef<number | null>(null)
+  const recorderRef = useRef<MediaRecorder | null>(null)
+  const recorderStreamRef = useRef<MediaStream | null>(null)
+  const recorderChunksRef = useRef<Blob[]>([])
+  const recorderTimerRef = useRef<number | null>(null)
+  const discardRecordingRef = useRef(false)
+  const incomingAudioRef = useRef(new Map<string, IncomingAudio>())
+  const audioUrlsRef = useRef(new Set<string>())
 
   useEffect(() => {
     const signaling = new BroadcastChannel(SIGNAL_CHANNEL)
@@ -126,13 +148,16 @@ export function SafetyCircle() {
       window.removeEventListener('hashchange', inspectHash)
       sessionRef.current?.close()
       stopLocationWatcher()
+      discardRecording()
+      releaseAudioMessages()
     }
   }, [])
 
   useEffect(() => {
     try {
       if (rememberMessages) {
-        localStorage.setItem(MESSAGE_STORAGE_KEY, JSON.stringify(messages.slice(-100)))
+        const textMessages = messages.filter((item) => item.kind !== 'audio' && !item.audioUrl)
+        localStorage.setItem(MESSAGE_STORAGE_KEY, JSON.stringify(textMessages.slice(-100)))
       } else {
         localStorage.removeItem(MESSAGE_STORAGE_KEY)
       }
@@ -148,6 +173,7 @@ export function SafetyCircle() {
         if (state === 'connected') setPhase('connected')
         if (state === 'failed' || state === 'disconnected' || state === 'closed') {
           stopLocationSharing(false)
+          discardRecording()
           setPhase(state === 'failed' ? 'error' : 'idle')
           if (state === 'failed') setError('The direct connection could not be established. Keep both devices on the same reachable network and try again.')
         }
@@ -259,7 +285,7 @@ export function SafetyCircle() {
     }
     try {
       await sessionRef.current?.send(packet)
-      setMessages((current) => [...current, { ...packet, own: true }])
+      setMessages((current) => [...current, { ...packet, kind: 'text', own: true }])
       setMessage('')
     } catch (reason) {
       showError(reason)
@@ -268,7 +294,20 @@ export function SafetyCircle() {
 
   function handlePacket(packet: CirclePacket) {
     if (packet.type === 'chat') {
-      setMessages((current) => [...current, { ...packet, own: false }])
+      setMessages((current) => [...current, { ...packet, kind: 'text', own: false }])
+    }
+    if (packet.type === 'audio-start') {
+      if (packet.totalChunks < 1 || packet.totalChunks > 512) return
+      incomingAudioRef.current.set(packet.id, {
+        sender: packet.sender,
+        sentAt: packet.sentAt,
+        mimeType: packet.mimeType,
+        chunks: new Array(packet.totalChunks),
+        received: 0,
+      })
+    }
+    if (packet.type === 'audio-chunk') {
+      receiveAudioChunk(packet)
     }
     if (packet.type === 'location') {
       setLocations((current) => ({
@@ -282,6 +321,127 @@ export function SafetyCircle() {
         delete next[packet.sender]
         return next
       })
+    }
+  }
+
+  function receiveAudioChunk(packet: Extract<CirclePacket, { type: 'audio-chunk' }>) {
+    const incoming = incomingAudioRef.current.get(packet.id)
+    if (!incoming || packet.index < 0 || packet.index >= incoming.chunks.length || packet.data.length > 20_000) return
+    if (incoming.chunks[packet.index] === undefined) incoming.received += 1
+    incoming.chunks[packet.index] = packet.data
+    if (incoming.received !== incoming.chunks.length) return
+    const bytes = decodeAudioChunks(incoming.chunks as string[])
+    const audioUrl = URL.createObjectURL(new Blob([bytes], { type: incoming.mimeType }))
+    audioUrlsRef.current.add(audioUrl)
+    setMessages((current) => [...current, {
+      id: packet.id,
+      sender: incoming.sender,
+      kind: 'audio',
+      audioUrl,
+      sentAt: incoming.sentAt,
+      own: false,
+    }])
+    incomingAudioRef.current.delete(packet.id)
+  }
+
+  async function startRecording() {
+    if (phase !== 'connected' || recording || sendingAudio) return
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+      setError('Voice notes are not supported by this device or browser.')
+      return
+    }
+    setError('')
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true },
+        video: false,
+      })
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus'
+        : ''
+      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined)
+      recorderRef.current = recorder
+      recorderStreamRef.current = stream
+      recorderChunksRef.current = []
+      discardRecordingRef.current = false
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) recorderChunksRef.current.push(event.data)
+      }
+      recorder.onstop = () => {
+        const discarded = discardRecordingRef.current
+        const blob = new Blob(recorderChunksRef.current, { type: recorder.mimeType || 'audio/webm' })
+        finishRecorderCleanup()
+        if (!discarded && blob.size > 0) void sendVoiceNote(blob)
+      }
+      recorder.start(1_000)
+      setRecording(true)
+      recorderTimerRef.current = window.setTimeout(stopRecording, 30_000)
+    } catch (reason) {
+      finishRecorderCleanup()
+      setError(errorMessage(reason, 'Microphone permission was denied or the microphone is unavailable.'))
+    }
+  }
+
+  function stopRecording() {
+    if (recorderRef.current?.state === 'recording') recorderRef.current.stop()
+  }
+
+  function discardRecording() {
+    discardRecordingRef.current = true
+    if (recorderRef.current?.state === 'recording') {
+      recorderRef.current.stop()
+    } else {
+      finishRecorderCleanup()
+    }
+  }
+
+  function finishRecorderCleanup() {
+    if (recorderTimerRef.current !== null) window.clearTimeout(recorderTimerRef.current)
+    recorderStreamRef.current?.getTracks().forEach((track) => track.stop())
+    recorderTimerRef.current = null
+    recorderRef.current = null
+    recorderStreamRef.current = null
+    recorderChunksRef.current = []
+    setRecording(false)
+  }
+
+  async function sendVoiceNote(blob: Blob) {
+    const id = crypto.randomUUID()
+    const chunks = encodeAudioChunks(await blob.arrayBuffer())
+    if (chunks.length === 0) return
+    if (chunks.length > 512) {
+      setError('This recording is too large to send. Try a shorter voice note.')
+      return
+    }
+    setSendingAudio(true)
+    try {
+      const session = sessionRef.current
+      if (!session || phase !== 'connected') throw new Error('The peer connection closed before the recording could be sent.')
+      await session.send({
+        type: 'audio-start',
+        id,
+        sender: displayName,
+        sentAt: Date.now(),
+        mimeType: blob.type || 'audio/webm',
+        totalChunks: chunks.length,
+      })
+      for (const [index, data] of chunks.entries()) {
+        await session.send({ type: 'audio-chunk', id, index, data })
+      }
+      const audioUrl = URL.createObjectURL(blob)
+      audioUrlsRef.current.add(audioUrl)
+      setMessages((current) => [...current, {
+        id,
+        sender: displayName,
+        kind: 'audio',
+        audioUrl,
+        sentAt: Date.now(),
+        own: true,
+      }])
+    } catch (reason) {
+      setError(errorMessage(reason, 'The encrypted recording could not be sent.'))
+    } finally {
+      setSendingAudio(false)
     }
   }
 
@@ -388,6 +548,7 @@ export function SafetyCircle() {
   }
 
   function disconnect() {
+    discardRecording()
     stopLocationSharing(true)
     sessionRef.current?.close()
     sessionRef.current = null
@@ -395,9 +556,20 @@ export function SafetyCircle() {
     setInviteValue('')
     setIncomingInvite(null)
     setLocations({})
+    releaseAudioMessages()
+  }
+
+  function releaseAudioMessages() {
+    for (const audioUrl of audioUrlsRef.current) URL.revokeObjectURL(audioUrl)
+    audioUrlsRef.current.clear()
+    incomingAudioRef.current.clear()
+    setMessages((current) => current.filter((item) => item.kind !== 'audio' && !item.audioUrl))
   }
 
   function clearMessageHistory() {
+    for (const audioUrl of audioUrlsRef.current) URL.revokeObjectURL(audioUrl)
+    audioUrlsRef.current.clear()
+    incomingAudioRef.current.clear()
     setMessages([])
     localStorage.removeItem(MESSAGE_STORAGE_KEY)
   }
@@ -487,9 +659,10 @@ export function SafetyCircle() {
               <div><Smartphone size={19} /><span><strong>{peerName}</strong><small>Connected peer · encrypted direct link</small></span></div>
               <p><Radio size={15} /> Chat needs reachable Wi-Fi or mobile data such as EDGE. Satellite works only when the device or carrier exposes it as a normal network connection.</p>
             </div>
+            {error && <p className="circle-error dashboard-error"><AlertTriangle size={17} /> {error}</p>}
 
             <div className="geomap-panel">
-              <div className="panel-heading"><div><p className="section-kicker">Local geomap</p><h2>Shared positions</h2></div><span><Map size={17} /> No map server</span></div>
+              <div className="panel-heading"><div><p className="section-kicker">Local geomap</p><h2>Shared positions</h2></div><span><MapIcon size={17} /> No map server</span></div>
               <LocalGeoMap locations={locations} ownName={displayName} />
               <div className="sharing-controls">
                 <label>Location precision<select value={precision} onChange={(event) => setPrecision(Number(event.target.value) as LocationPrecision)} disabled={sharing}>
@@ -506,12 +679,13 @@ export function SafetyCircle() {
 
             <div className="chat-panel">
               <div className="panel-heading"><div><p className="section-kicker">Encrypted inbox</p><h2>Safety chat</h2></div><span><KeyRound size={17} /> E2E</span></div>
-              <div className="history-controls"><label><input type="checkbox" checked={rememberMessages} onChange={(event) => setRememberMessages(event.target.checked)} /> Remember on this device</label><button type="button" onClick={clearMessageHistory} disabled={messages.length === 0} title="Clear local message history"><Trash2 size={15} /> Clear</button></div>
+              <div className="history-controls"><label><input type="checkbox" checked={rememberMessages} onChange={(event) => setRememberMessages(event.target.checked)} /> Remember text on this device</label><button type="button" onClick={clearMessageHistory} disabled={messages.length === 0} title="Clear local message history"><Trash2 size={15} /> Clear</button></div>
               <div className="message-list" aria-live="polite">
-                {messages.length === 0 ? <div className="empty-chat"><MessageCircle size={30} /><p>Messages travel only over the encrypted peer link. Optional history stays in this device's local app storage.</p></div> : messages.map((item) => <article className={item.own ? 'message own' : 'message'} key={item.id}><strong>{item.own ? 'You' : item.sender}</strong><p>{item.text}</p><time>{new Date(item.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></article>)}
+                {messages.length === 0 ? <div className="empty-chat"><MessageCircle size={30} /><p>Text and voice notes travel only over the encrypted peer link. Voice notes are erased when you disconnect.</p></div> : messages.map((item) => <article className={item.own ? 'message own' : 'message'} key={item.id}><strong>{item.own ? 'You' : item.sender}</strong>{item.kind === 'audio' && item.audioUrl ? <audio controls preload="metadata" src={item.audioUrl}>Voice note playback is not supported.</audio> : <p>{item.text}</p>}<time>{new Date(item.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></article>)}
               </div>
               <form className="message-compose" onSubmit={(event) => { event.preventDefault(); void sendMessage() }}>
-                <input value={message} onChange={(event) => setMessage(event.target.value)} maxLength={500} placeholder={`Message ${peerName}`} aria-label={`Message ${peerName}`} />
+                <button className={recording ? 'record-button recording' : 'record-button'} type="button" onClick={recording ? stopRecording : startRecording} disabled={sendingAudio} aria-label={recording ? 'Stop and send voice note' : 'Record encrypted voice note'} title={recording ? 'Stop and send' : 'Record voice note'}>{recording ? <Square size={16} fill="currentColor" /> : <Mic size={18} />}</button>
+                <input value={message} onChange={(event) => setMessage(event.target.value)} maxLength={500} placeholder={recording ? 'Recording... 30 seconds maximum' : sendingAudio ? 'Encrypting and sending voice note...' : `Message ${peerName}`} aria-label={`Message ${peerName}`} disabled={recording || sendingAudio} />
                 <button type="submit" aria-label="Send encrypted message" disabled={!message.trim()}><Send size={18} /></button>
               </form>
             </div>
